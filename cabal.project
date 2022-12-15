@@ -1,0 +1,5 @@
+index-state: 2022-12-13T00:00:00Z
+packages: .
+
+package general-allocate
+  ghc-options: -Wall
