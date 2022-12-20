@@ -1,9 +1,12 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE UnicodeSyntax #-}
@@ -23,9 +26,19 @@ For contexts where nested scope-based allocation and release is insufficient, se
 module Control.Monad.With where
 
 import Control.Exception.Safe
+import Control.Monad.Except
+import qualified Control.Monad.RWS.Lazy as L
+import Control.Monad.RWS.Strict
 import Control.Monad.Reader
 import Control.Monad.ST
+import qualified Control.Monad.State.Lazy as L
+import Control.Monad.State.Strict
+import Control.Monad.Trans.Identity
+import Control.Monad.Trans.Maybe
 import Control.Monad.Trans.Resource.Internal
+import qualified Control.Monad.Writer.Lazy as L
+import Control.Monad.Writer.Strict
+import Data.Functor
 import Data.Functor.Identity
 import Data.GeneralAllocate
 import Data.Void
@@ -126,18 +139,26 @@ generalFinally go fin = stateThreadingGeneralWith alloc $ const go
   alloc = GeneralAllocate $ \_ → pure $ GeneralAllocated () rel
   rel _ = fin
 
+-- | A 'MonadWith' whose exception type can be projected into the Haskell exception hierarchy
+class MonadWith m ⇒ MonadWithExceptable m where
+  -- |
+  withExceptionToException ∷ WithException m → SomeException
+
 instance MonadWith IO where
-  stateThreadingGeneralWith (GeneralAllocate allocArg) go = mask $ \restore → do
-    GeneralAllocated res releaseRes ← allocArg restore
+  stateThreadingGeneralWith (GeneralAllocate allocA) go = mask $ \restore → do
+    GeneralAllocated a releaseA ← allocA restore
     b ←
-      restore (go res) `catch` \e → do
-        _ ← releaseRes $ ReleaseFailure e
+      restore (go a) `catch` \e → do
+        _ ← releaseA $ ReleaseFailure e
         throwM e
-    c ← releaseRes $ ReleaseSuccess b
+    c ← releaseA $ ReleaseSuccess b
     pure (b, c)
 
+instance MonadWithExceptable IO where
+  withExceptionToException = id
+
 {- | A helper for [DerivingVia](https://ghc.gitlab.haskell.org/ghc/doc/users_guide/exts/deriving_via.html) a
-'MonadWith' instance for any 'Monad'.
+'MonadWith' and 'MonadWithExceptable' instance for any 'Monad'.
 
 Note that the derived instance is only valid if the monad satisfies the "no continuation" condition, i.e.
 that if execution of a computation exits a given lexical scope we are guaranteed that either all of the
@@ -151,18 +172,25 @@ newtype WithNoContinuation m a = WithNoContinuation (m a) deriving newtype (Func
 
 instance (Monad m) ⇒ MonadWith (WithNoContinuation m) where
   type WithException (WithNoContinuation m) = Void
-  stateThreadingGeneralWith (GeneralAllocate allocArg) go = WithNoContinuation $ do
-    let WithNoContinuation allocArg' = allocArg id
-    GeneralAllocated res releaseRes ← allocArg'
-    let WithNoContinuation go' = go res
+  stateThreadingGeneralWith (GeneralAllocate allocA) go = WithNoContinuation $ do
+    let WithNoContinuation allocA' = allocA id
+    GeneralAllocated a releaseA ← allocA'
+    let WithNoContinuation go' = go a
     b ← go'
-    let WithNoContinuation releaseRes' = releaseRes $ ReleaseSuccess b
-    c ← releaseRes'
+    let WithNoContinuation releaseA' = releaseA $ ReleaseSuccess b
+    c ← releaseA'
     pure (b, c)
+
+instance (Monad m) ⇒ MonadWithExceptable (WithNoContinuation m) where
+  withExceptionToException = absurd
 
 deriving via WithNoContinuation (ST s) instance MonadWith (ST s)
 
+deriving via WithNoContinuation (ST s) instance MonadWithExceptable (ST s)
+
 deriving via WithNoContinuation Identity instance MonadWith Identity
+
+deriving via WithNoContinuation Identity instance MonadWithExceptable Identity
 
 instance (MonadWith m) ⇒ MonadWith (ReaderT r m) where
   type WithException (ReaderT r m) = WithException m
@@ -171,18 +199,21 @@ instance (MonadWith m) ⇒ MonadWith (ReaderT r m) where
      . GeneralAllocate (ReaderT r m) (WithException m) releaseReturn b a
     → (a → ReaderT r m b)
     → ReaderT r m (b, releaseReturn)
-  stateThreadingGeneralWith (GeneralAllocate allocFun) go = ReaderT $ \r → do
+  stateThreadingGeneralWith (GeneralAllocate allocA) go = ReaderT $ \r → do
     let
-      allocFun' ∷ (∀ x. m x → m x) → m (GeneralAllocated m (WithException m) releaseReturn b a)
-      allocFun' restore = do
+      allocA' ∷ (∀ x. m x → m x) → m (GeneralAllocated m (WithException m) releaseReturn b a)
+      allocA' restore = do
         let
           restore' ∷ ∀ x. ReaderT r m x → ReaderT r m x
           restore' mx = ReaderT $ restore . runReaderT mx
-        GeneralAllocated x release ← runReaderT (allocFun restore') r
+        GeneralAllocated a releaseA ← runReaderT (allocA restore') r
         let
-          release' relTy = runReaderT (release relTy) r
-        pure $ GeneralAllocated x release'
-    stateThreadingGeneralWith (GeneralAllocate allocFun') (flip runReaderT r . go)
+          releaseA' relTy = runReaderT (releaseA relTy) r
+        pure $ GeneralAllocated a releaseA'
+    stateThreadingGeneralWith (GeneralAllocate allocA') (flip runReaderT r . go)
+
+instance (MonadWithExceptable m) ⇒ MonadWithExceptable (ReaderT r m) where
+  withExceptionToException = withExceptionToException @m
 
 instance (MonadWith m) ⇒ MonadWith (ResourceT m) where
   type WithException (ResourceT m) = WithException m
@@ -191,15 +222,293 @@ instance (MonadWith m) ⇒ MonadWith (ResourceT m) where
      . GeneralAllocate (ResourceT m) (WithException m) releaseReturn b a
     → (a → ResourceT m b)
     → ResourceT m (b, releaseReturn)
-  stateThreadingGeneralWith (GeneralAllocate allocFun) go = ResourceT $ \st → do
+  stateThreadingGeneralWith (GeneralAllocate allocA) go = ResourceT $ \st → do
     let
-      allocFun' ∷ (∀ x. m x → m x) → m (GeneralAllocated m (WithException m) releaseReturn b a)
-      allocFun' restore = do
+      allocA' ∷ (∀ x. m x → m x) → m (GeneralAllocated m (WithException m) releaseReturn b a)
+      allocA' restore = do
         let
           restore' ∷ ∀ x. ResourceT m x → ResourceT m x
           restore' mx = ResourceT $ restore . unResourceT mx
-        GeneralAllocated x release ← unResourceT (allocFun restore') st
+        GeneralAllocated a releaseA ← unResourceT (allocA restore') st
         let
-          release' relTy = unResourceT (release relTy) st
-        pure $ GeneralAllocated x release'
-    stateThreadingGeneralWith (GeneralAllocate allocFun') (flip unResourceT st . go)
+          releaseA' relTy = unResourceT (releaseA relTy) st
+        pure $ GeneralAllocated a releaseA'
+    stateThreadingGeneralWith (GeneralAllocate allocA') (flip unResourceT st . go)
+
+instance (MonadWithExceptable m) ⇒ MonadWithExceptable (ResourceT m) where
+  withExceptionToException = withExceptionToException @m
+
+instance MonadWith (Either e) where
+  type WithException (Either e) = e
+  stateThreadingGeneralWith (GeneralAllocate allocA) go = do
+    GeneralAllocated a releaseA ← allocA id
+    b ← case go a of
+      Left e → do
+        _ ← releaseA $ ReleaseFailure e
+        Left e
+      x → x
+    c ← releaseA $ ReleaseSuccess b
+    pure (b, c)
+
+-- | An 'Exception' representing a failure in the 'Either' monad.
+newtype EitherException e = EitherException e deriving stock (Show)
+
+instance (Show e, Typeable e) ⇒ Exception (EitherException e)
+
+instance (Show e, Typeable e) ⇒ MonadWithExceptable (Either e) where
+  withExceptionToException = toException . EitherException
+
+instance MonadWith m ⇒ MonadWith (MaybeT m) where
+  type WithException (MaybeT m) = Maybe (WithException m)
+  stateThreadingGeneralWith
+    ∷ ∀ a b releaseReturn
+     . GeneralAllocate (MaybeT m) (Maybe (WithException m)) releaseReturn b a
+    → (a → MaybeT m b)
+    → MaybeT m (b, releaseReturn)
+  stateThreadingGeneralWith (GeneralAllocate allocA) go = MaybeT $ do
+    (mb, mc) ← stateThreadingGeneralWith (GeneralAllocate allocA') $ \case
+      Just a → runMaybeT $ go a
+      Nothing → pure Nothing
+    pure $ (,) <$> mb <*> mc
+   where
+    allocA' ∷ (∀ x. m x → m x) → m (GeneralAllocated m (WithException m) (Maybe releaseReturn) (Maybe b) (Maybe a))
+    allocA' restore =
+      runMaybeT (allocA restore') <&> \case
+        Just (GeneralAllocated a releaseA) → GeneralAllocated (Just a) $ \case
+          ReleaseSuccess (Just b) → runMaybeT . releaseA $ ReleaseSuccess b
+          ReleaseFailure e → runMaybeT . releaseA . ReleaseFailure $ Just e
+          _ → runMaybeT . releaseA $ ReleaseFailure Nothing
+        Nothing → GeneralAllocated Nothing (const $ pure Nothing)
+     where
+      restore' ∷ ∀ x. MaybeT m x → MaybeT m x
+      restore' = MaybeT . restore . runMaybeT
+
+-- | An 'Exception' representing the 'Nothing' case in a 'MaybeT' monad.
+data NothingException = NothingException deriving (Show)
+
+instance Exception NothingException
+
+instance MonadWithExceptable m ⇒ MonadWithExceptable (MaybeT m) where
+  withExceptionToException (Just e) = withExceptionToException @m e
+  withExceptionToException Nothing = toException NothingException
+
+instance MonadWith m ⇒ MonadWith (ExceptT e m) where
+  type WithException (ExceptT e m) = Either e (WithException m)
+  stateThreadingGeneralWith
+    ∷ ∀ a b releaseReturn
+     . GeneralAllocate (ExceptT e m) (Either e (WithException m)) releaseReturn b a
+    → (a → ExceptT e m b)
+    → ExceptT e m (b, releaseReturn)
+  stateThreadingGeneralWith (GeneralAllocate allocA) go = ExceptT $ do
+    (eb, ec) ← stateThreadingGeneralWith (GeneralAllocate allocA') $ \case
+      Left e → pure $ Left e
+      Right a → runExceptT $ go a
+    pure $ do
+      c ← ec
+      b ← eb
+      pure (b, c)
+   where
+    allocA' ∷ (∀ x. m x → m x) → m (GeneralAllocated m (WithException m) (Either e releaseReturn) (Either e b) (Either e a))
+    allocA' restore =
+      runExceptT (allocA restore') <&> \case
+        Right (GeneralAllocated a releaseA) → GeneralAllocated (Right a) $ \case
+          ReleaseSuccess (Right b) → runExceptT . releaseA $ ReleaseSuccess b
+          ReleaseSuccess (Left e) → runExceptT . releaseA . ReleaseFailure $ Left e
+          ReleaseFailure e → runExceptT . releaseA . ReleaseFailure $ Right e
+        Left e → GeneralAllocated (Left e) (const . pure $ Left e)
+     where
+      restore' ∷ ∀ x. ExceptT e m x → ExceptT e m x
+      restore' = ExceptT . restore . runExceptT
+
+instance (Show e, Typeable e, MonadWithExceptable m) ⇒ MonadWithExceptable (ExceptT e m) where
+  withExceptionToException (Right e) = withExceptionToException @m e
+  withExceptionToException (Left e) = toException $ EitherException e
+
+instance MonadWith m ⇒ MonadWith (IdentityT m) where
+  type WithException (IdentityT m) = WithException m
+  stateThreadingGeneralWith
+    ∷ ∀ a b releaseReturn
+     . GeneralAllocate (IdentityT m) (WithException m) releaseReturn b a
+    → (a → IdentityT m b)
+    → IdentityT m (b, releaseReturn)
+  stateThreadingGeneralWith (GeneralAllocate allocA) go = IdentityT $ do
+    stateThreadingGeneralWith (GeneralAllocate allocA') $ runIdentityT . go
+   where
+    allocA' ∷ (∀ x. m x → m x) → m (GeneralAllocated m (WithException m) releaseReturn b a)
+    allocA' restore =
+      runIdentityT (allocA restore') <&> \case
+        GeneralAllocated a releaseA → GeneralAllocated a $ runIdentityT . releaseA
+     where
+      restore' ∷ ∀ x. IdentityT m x → IdentityT m x
+      restore' = IdentityT . restore . runIdentityT
+
+instance MonadWithExceptable m ⇒ MonadWithExceptable (IdentityT m) where
+  withExceptionToException = withExceptionToException @m
+
+instance MonadWith m ⇒ MonadWith (L.StateT s m) where
+  type WithException (L.StateT s m) = (WithException m, s)
+  stateThreadingGeneralWith
+    ∷ ∀ a b releaseReturn
+     . GeneralAllocate (L.StateT s m) (WithException m, s) releaseReturn b a
+    → (a → L.StateT s m b)
+    → L.StateT s m (b, releaseReturn)
+  stateThreadingGeneralWith (GeneralAllocate allocA) go = L.StateT $ \s0 → do
+    let allocA' ∷ (∀ x. m x → m x) → m (GeneralAllocated m (WithException m) (releaseReturn, s) (b, s) (a, s))
+        allocA' restore =
+          L.runStateT (allocA restore') s0 <&> \case
+            (GeneralAllocated a releaseA, s1) → GeneralAllocated (a, s1) $ \case
+              ReleaseSuccess (b, s2) → L.runStateT (releaseA $ ReleaseSuccess b) s2
+              ReleaseFailure e → L.runStateT (releaseA $ ReleaseFailure (e, s1)) s1
+         where
+          restore' ∷ ∀ x. L.StateT s m x → L.StateT s m x
+          restore' mx = L.StateT $ restore . L.runStateT mx
+    ((b, _s2), (c, s3)) ← stateThreadingGeneralWith (GeneralAllocate allocA') $ \case
+      (a, s1) → L.runStateT (go a) s1
+    pure ((b, c), s3)
+
+instance (MonadWithExceptable m) ⇒ MonadWithExceptable (L.StateT s m) where
+  withExceptionToException (e, _) = withExceptionToException @m e
+
+instance MonadWith m ⇒ MonadWith (StateT s m) where
+  type WithException (StateT s m) = (WithException m, s)
+  stateThreadingGeneralWith
+    ∷ ∀ a b releaseReturn
+     . GeneralAllocate (StateT s m) (WithException m, s) releaseReturn b a
+    → (a → StateT s m b)
+    → StateT s m (b, releaseReturn)
+  stateThreadingGeneralWith (GeneralAllocate allocA) go = StateT $ \s0 → do
+    let allocA' ∷ (∀ x. m x → m x) → m (GeneralAllocated m (WithException m) (releaseReturn, s) (b, s) (a, s))
+        allocA' restore =
+          runStateT (allocA restore') s0 <&> \case
+            (GeneralAllocated a releaseA, s1) → GeneralAllocated (a, s1) $ \case
+              ReleaseSuccess (b, s2) → runStateT (releaseA $ ReleaseSuccess b) s2
+              ReleaseFailure e → runStateT (releaseA $ ReleaseFailure (e, s1)) s1
+         where
+          restore' ∷ ∀ x. StateT s m x → StateT s m x
+          restore' mx = StateT $ restore . runStateT mx
+    ((b, _s2), (c, s3)) ← stateThreadingGeneralWith (GeneralAllocate allocA') $ \case
+      (a, s1) → runStateT (go a) s1
+    pure ((b, c), s3)
+
+instance (MonadWithExceptable m) ⇒ MonadWithExceptable (StateT s m) where
+  withExceptionToException (e, _) = withExceptionToException @m e
+
+instance (MonadWith m, Monoid w) ⇒ MonadWith (L.WriterT w m) where
+  type WithException (L.WriterT w m) = (WithException m, w)
+  stateThreadingGeneralWith
+    ∷ ∀ a b releaseReturn
+     . GeneralAllocate (L.WriterT w m) (WithException m, w) releaseReturn b a
+    → (a → L.WriterT w m b)
+    → L.WriterT w m (b, releaseReturn)
+  stateThreadingGeneralWith (GeneralAllocate allocA) go = L.WriterT $ do
+    let allocA' ∷ (∀ x. m x → m x) → m (GeneralAllocated m (WithException m) (releaseReturn, w) (b, w) (a, w))
+        allocA' restore =
+          L.runWriterT (allocA restore') <&> \case
+            (GeneralAllocated a releaseA, w0) → GeneralAllocated (a, w0) $ \case
+              ReleaseSuccess (b, w1) → do
+                (c, w2) ← L.runWriterT . releaseA $ ReleaseSuccess b
+                pure (c, w1 <> w2)
+              ReleaseFailure e → do
+                (c, w1) ← L.runWriterT . releaseA $ ReleaseFailure (e, w0)
+                pure (c, w0 <> w1)
+         where
+          restore' ∷ ∀ x. L.WriterT w m x → L.WriterT w m x
+          restore' = L.WriterT . restore . L.runWriterT
+    ((b, _w1), (c, w2)) ← stateThreadingGeneralWith (GeneralAllocate allocA') $ \case
+      (a, w0) → do
+        (b, w1) ← L.runWriterT $ go a
+        pure (b, w0 <> w1)
+    pure ((b, c), w2)
+
+instance (MonadWithExceptable m, Monoid w) ⇒ MonadWithExceptable (L.WriterT w m) where
+  withExceptionToException (e, _) = withExceptionToException @m e
+
+instance (MonadWith m, Monoid w) ⇒ MonadWith (WriterT w m) where
+  type WithException (WriterT w m) = (WithException m, w)
+  stateThreadingGeneralWith
+    ∷ ∀ a b releaseReturn
+     . GeneralAllocate (WriterT w m) (WithException m, w) releaseReturn b a
+    → (a → WriterT w m b)
+    → WriterT w m (b, releaseReturn)
+  stateThreadingGeneralWith (GeneralAllocate allocA) go = WriterT $ do
+    let allocA' ∷ (∀ x. m x → m x) → m (GeneralAllocated m (WithException m) (releaseReturn, w) (b, w) (a, w))
+        allocA' restore =
+          runWriterT (allocA restore') <&> \case
+            (GeneralAllocated a releaseA, w0) → GeneralAllocated (a, w0) $ \case
+              ReleaseSuccess (b, w1) → do
+                (c, w2) ← runWriterT . releaseA $ ReleaseSuccess b
+                pure (c, w1 <> w2)
+              ReleaseFailure e → do
+                (c, w1) ← runWriterT . releaseA $ ReleaseFailure (e, w0)
+                pure (c, w0 <> w1)
+         where
+          restore' ∷ ∀ x. WriterT w m x → WriterT w m x
+          restore' = WriterT . restore . runWriterT
+    ((b, _w1), (c, w2)) ← stateThreadingGeneralWith (GeneralAllocate allocA') $ \case
+      (a, w0) → do
+        (b, w1) ← runWriterT $ go a
+        pure (b, w0 <> w1)
+    pure ((b, c), w2)
+
+instance (MonadWithExceptable m, Monoid w) ⇒ MonadWithExceptable (WriterT w m) where
+  withExceptionToException (e, _) = withExceptionToException @m e
+
+instance (MonadWith m, Monoid w) ⇒ MonadWith (L.RWST r w s m) where
+  type WithException (L.RWST r w s m) = (WithException m, s, w)
+  stateThreadingGeneralWith
+    ∷ ∀ a b releaseReturn
+     . GeneralAllocate (L.RWST r w s m) (WithException m, s, w) releaseReturn b a
+    → (a → L.RWST r w s m b)
+    → L.RWST r w s m (b, releaseReturn)
+  stateThreadingGeneralWith (GeneralAllocate allocA) go = L.RWST $ \r s0 → do
+    let allocA' ∷ (∀ x. m x → m x) → m (GeneralAllocated m (WithException m) (releaseReturn, s, w) (b, s, w) (a, s, w))
+        allocA' restore =
+          L.runRWST (allocA restore') r s0 <&> \case
+            (GeneralAllocated a releaseA, s1, w0) → GeneralAllocated (a, s1, w0) $ \case
+              ReleaseSuccess (b, s2, w1) → do
+                (c, s3, w2) ← L.runRWST (releaseA $ ReleaseSuccess b) r s2
+                pure (c, s3, w1 <> w2)
+              ReleaseFailure e → do
+                (c, s2, w1) ← L.runRWST (releaseA $ ReleaseFailure (e, s1, w0)) r s1
+                pure (c, s2, w0 <> w1)
+         where
+          restore' ∷ ∀ x. L.RWST r w s m x → L.RWST r w s m x
+          restore' mx = L.RWST $ \r' → restore . L.runRWST mx r'
+    ((b, _s2, _w1), (c, s3, w2)) ← stateThreadingGeneralWith (GeneralAllocate allocA') $ \case
+      (a, s1, w0) → do
+        (b, s2, w1) ← L.runRWST (go a) r s1
+        pure (b, s2, w0 <> w1)
+    pure ((b, c), s3, w2)
+
+instance (MonadWithExceptable m, Monoid w) ⇒ MonadWithExceptable (L.RWST r w s m) where
+  withExceptionToException (e, _, _) = withExceptionToException @m e
+
+instance (MonadWith m, Monoid w) ⇒ MonadWith (RWST r w s m) where
+  type WithException (RWST r w s m) = (WithException m, s, w)
+  stateThreadingGeneralWith
+    ∷ ∀ a b releaseReturn
+     . GeneralAllocate (RWST r w s m) (WithException m, s, w) releaseReturn b a
+    → (a → RWST r w s m b)
+    → RWST r w s m (b, releaseReturn)
+  stateThreadingGeneralWith (GeneralAllocate allocA) go = RWST $ \r s0 → do
+    let allocA' ∷ (∀ x. m x → m x) → m (GeneralAllocated m (WithException m) (releaseReturn, s, w) (b, s, w) (a, s, w))
+        allocA' restore =
+          runRWST (allocA restore') r s0 <&> \case
+            (GeneralAllocated a releaseA, s1, w0) → GeneralAllocated (a, s1, w0) $ \case
+              ReleaseSuccess (b, s2, w1) → do
+                (c, s3, w2) ← runRWST (releaseA $ ReleaseSuccess b) r s2
+                pure (c, s3, w1 <> w2)
+              ReleaseFailure e → do
+                (c, s2, w1) ← runRWST (releaseA $ ReleaseFailure (e, s1, w0)) r s1
+                pure (c, s2, w0 <> w1)
+         where
+          restore' ∷ ∀ x. RWST r w s m x → RWST r w s m x
+          restore' mx = RWST $ \r' → restore . runRWST mx r'
+    ((b, _s2, _w1), (c, s3, w2)) ← stateThreadingGeneralWith (GeneralAllocate allocA') $ \case
+      (a, s1, w0) → do
+        (b, s2, w1) ← runRWST (go a) r s1
+        pure (b, s2, w0 <> w1)
+    pure ((b, c), s3, w2)
+
+instance (MonadWithExceptable m, Monoid w) ⇒ MonadWithExceptable (RWST r w s m) where
+  withExceptionToException (e, _, _) = withExceptionToException @m e
