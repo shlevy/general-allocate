@@ -1,6 +1,6 @@
 cabal-version:      3.0
 name:               general-allocate
-version:            0.1.1.0
+version:            0.2.0.0
 license:            Apache-2.0
 license-file:       LICENSE
 author:             Shea Levy
@@ -45,6 +45,7 @@ library
     Control.Monad.NoContinuation.Resource.Internal
     Control.Monad.With
     Data.GeneralAllocate
+    Data.Exceptable
 
   build-depends:
     , base             ^>= { 4.14, 4.16, 4.17 }

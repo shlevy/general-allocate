@@ -1,12 +1,13 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE UnicodeSyntax #-}
@@ -38,6 +39,7 @@ import Control.Monad.Trans.Maybe
 import Control.Monad.Trans.Resource.Internal
 import qualified Control.Monad.Writer.Lazy as L
 import Control.Monad.Writer.Strict
+import Data.Exceptable
 import Data.Functor
 import Data.Functor.Identity
 import Data.GeneralAllocate
@@ -140,9 +142,7 @@ generalFinally go fin = stateThreadingGeneralWith alloc $ const go
   rel _ = fin
 
 -- | A 'MonadWith' whose exception type can be projected into the Haskell exception hierarchy
-class MonadWith m ⇒ MonadWithExceptable m where
-  -- |
-  withExceptionToException ∷ WithException m → SomeException
+type MonadWithExceptable m = (MonadWith m, Exceptable (WithException m))
 
 instance MonadWith IO where
   stateThreadingGeneralWith (GeneralAllocate allocA) go = mask $ \restore → do
@@ -153,9 +153,6 @@ instance MonadWith IO where
         throwM e
     c ← releaseA $ ReleaseSuccess b
     pure (b, c)
-
-instance MonadWithExceptable IO where
-  withExceptionToException = id
 
 {- | A helper for [DerivingVia](https://ghc.gitlab.haskell.org/ghc/doc/users_guide/exts/deriving_via.html) a
 'MonadWith' and 'MonadWithExceptable' instance for any 'Monad'.
@@ -181,16 +178,9 @@ instance (Monad m) ⇒ MonadWith (WithNoContinuation m) where
     c ← releaseA'
     pure (b, c)
 
-instance (Monad m) ⇒ MonadWithExceptable (WithNoContinuation m) where
-  withExceptionToException = absurd
-
 deriving via WithNoContinuation (ST s) instance MonadWith (ST s)
 
-deriving via WithNoContinuation (ST s) instance MonadWithExceptable (ST s)
-
 deriving via WithNoContinuation Identity instance MonadWith Identity
-
-deriving via WithNoContinuation Identity instance MonadWithExceptable Identity
 
 instance (MonadWith m) ⇒ MonadWith (ReaderT r m) where
   type WithException (ReaderT r m) = WithException m
@@ -212,9 +202,6 @@ instance (MonadWith m) ⇒ MonadWith (ReaderT r m) where
         pure $ GeneralAllocated a releaseA'
     stateThreadingGeneralWith (GeneralAllocate allocA') (flip runReaderT r . go)
 
-instance (MonadWithExceptable m) ⇒ MonadWithExceptable (ReaderT r m) where
-  withExceptionToException = withExceptionToException @m
-
 instance (MonadWith m) ⇒ MonadWith (ResourceT m) where
   type WithException (ResourceT m) = WithException m
   stateThreadingGeneralWith
@@ -235,28 +222,17 @@ instance (MonadWith m) ⇒ MonadWith (ResourceT m) where
         pure $ GeneralAllocated a releaseA'
     stateThreadingGeneralWith (GeneralAllocate allocA') (flip unResourceT st . go)
 
-instance (MonadWithExceptable m) ⇒ MonadWithExceptable (ResourceT m) where
-  withExceptionToException = withExceptionToException @m
-
 instance MonadWith (Either e) where
-  type WithException (Either e) = e
+  type WithException (Either e) = EitherException e
   stateThreadingGeneralWith (GeneralAllocate allocA) go = do
     GeneralAllocated a releaseA ← allocA id
     b ← case go a of
       Left e → do
-        _ ← releaseA $ ReleaseFailure e
+        _ ← releaseA . ReleaseFailure $ EitherException e
         Left e
       x → x
     c ← releaseA $ ReleaseSuccess b
     pure (b, c)
-
--- | An 'Exception' representing a failure in the 'Either' monad.
-newtype EitherException e = EitherException e deriving stock (Show)
-
-instance (Show e, Typeable e) ⇒ Exception (EitherException e)
-
-instance (Show e, Typeable e) ⇒ MonadWithExceptable (Either e) where
-  withExceptionToException = toException . EitherException
 
 instance MonadWith m ⇒ MonadWith (MaybeT m) where
   type WithException (MaybeT m) = Maybe (WithException m)
@@ -282,15 +258,6 @@ instance MonadWith m ⇒ MonadWith (MaybeT m) where
      where
       restore' ∷ ∀ x. MaybeT m x → MaybeT m x
       restore' = MaybeT . restore . runMaybeT
-
--- | An 'Exception' representing the 'Nothing' case in a 'MaybeT' monad.
-data NothingException = NothingException deriving (Show)
-
-instance Exception NothingException
-
-instance MonadWithExceptable m ⇒ MonadWithExceptable (MaybeT m) where
-  withExceptionToException (Just e) = withExceptionToException @m e
-  withExceptionToException Nothing = toException NothingException
 
 instance MonadWith m ⇒ MonadWith (ExceptT e m) where
   type WithException (ExceptT e m) = Either e (WithException m)
@@ -320,10 +287,6 @@ instance MonadWith m ⇒ MonadWith (ExceptT e m) where
       restore' ∷ ∀ x. ExceptT e m x → ExceptT e m x
       restore' = ExceptT . restore . runExceptT
 
-instance (Show e, Typeable e, MonadWithExceptable m) ⇒ MonadWithExceptable (ExceptT e m) where
-  withExceptionToException (Right e) = withExceptionToException @m e
-  withExceptionToException (Left e) = toException $ EitherException e
-
 instance MonadWith m ⇒ MonadWith (IdentityT m) where
   type WithException (IdentityT m) = WithException m
   stateThreadingGeneralWith
@@ -341,9 +304,6 @@ instance MonadWith m ⇒ MonadWith (IdentityT m) where
      where
       restore' ∷ ∀ x. IdentityT m x → IdentityT m x
       restore' = IdentityT . restore . runIdentityT
-
-instance MonadWithExceptable m ⇒ MonadWithExceptable (IdentityT m) where
-  withExceptionToException = withExceptionToException @m
 
 instance MonadWith m ⇒ MonadWith (L.StateT s m) where
   type WithException (L.StateT s m) = (WithException m, s)
@@ -366,9 +326,6 @@ instance MonadWith m ⇒ MonadWith (L.StateT s m) where
       (a, s1) → L.runStateT (go a) s1
     pure ((b, c), s3)
 
-instance (MonadWithExceptable m) ⇒ MonadWithExceptable (L.StateT s m) where
-  withExceptionToException (e, _) = withExceptionToException @m e
-
 instance MonadWith m ⇒ MonadWith (StateT s m) where
   type WithException (StateT s m) = (WithException m, s)
   stateThreadingGeneralWith
@@ -389,9 +346,6 @@ instance MonadWith m ⇒ MonadWith (StateT s m) where
     ((b, _s2), (c, s3)) ← stateThreadingGeneralWith (GeneralAllocate allocA') $ \case
       (a, s1) → runStateT (go a) s1
     pure ((b, c), s3)
-
-instance (MonadWithExceptable m) ⇒ MonadWithExceptable (StateT s m) where
-  withExceptionToException (e, _) = withExceptionToException @m e
 
 instance (MonadWith m, Monoid w) ⇒ MonadWith (L.WriterT w m) where
   type WithException (L.WriterT w m) = (WithException m, w)
@@ -420,9 +374,6 @@ instance (MonadWith m, Monoid w) ⇒ MonadWith (L.WriterT w m) where
         pure (b, w0 <> w1)
     pure ((b, c), w2)
 
-instance (MonadWithExceptable m, Monoid w) ⇒ MonadWithExceptable (L.WriterT w m) where
-  withExceptionToException (e, _) = withExceptionToException @m e
-
 instance (MonadWith m, Monoid w) ⇒ MonadWith (WriterT w m) where
   type WithException (WriterT w m) = (WithException m, w)
   stateThreadingGeneralWith
@@ -449,9 +400,6 @@ instance (MonadWith m, Monoid w) ⇒ MonadWith (WriterT w m) where
         (b, w1) ← runWriterT $ go a
         pure (b, w0 <> w1)
     pure ((b, c), w2)
-
-instance (MonadWithExceptable m, Monoid w) ⇒ MonadWithExceptable (WriterT w m) where
-  withExceptionToException (e, _) = withExceptionToException @m e
 
 instance (MonadWith m, Monoid w) ⇒ MonadWith (L.RWST r w s m) where
   type WithException (L.RWST r w s m) = (WithException m, s, w)
@@ -480,9 +428,6 @@ instance (MonadWith m, Monoid w) ⇒ MonadWith (L.RWST r w s m) where
         pure (b, s2, w0 <> w1)
     pure ((b, c), s3, w2)
 
-instance (MonadWithExceptable m, Monoid w) ⇒ MonadWithExceptable (L.RWST r w s m) where
-  withExceptionToException (e, _, _) = withExceptionToException @m e
-
 instance (MonadWith m, Monoid w) ⇒ MonadWith (RWST r w s m) where
   type WithException (RWST r w s m) = (WithException m, s, w)
   stateThreadingGeneralWith
@@ -509,6 +454,3 @@ instance (MonadWith m, Monoid w) ⇒ MonadWith (RWST r w s m) where
         (b, s2, w1) ← runRWST (go a) r s1
         pure (b, s2, w0 <> w1)
     pure ((b, c), s3, w2)
-
-instance (MonadWithExceptable m, Monoid w) ⇒ MonadWithExceptable (RWST r w s m) where
-  withExceptionToException (e, _, _) = withExceptionToException @m e

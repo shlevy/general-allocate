@@ -1,4 +1,5 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -46,6 +47,7 @@ import Control.Monad.Writer.Lazy
 import qualified Control.Monad.Writer.Strict as Strict
 import Data.Acquire
 import Data.Acquire.Internal
+import Data.Exceptable
 import Data.GeneralAllocate
 import Data.Kind
 
@@ -95,6 +97,9 @@ class (Monad m, Monad (AllocationContext m)) ⇒ MonadAllocate m where
   generalRelease
     ∷ GeneralReleaseKey m
     → AllocationContext m ()
+
+-- | A 'MonadAllocate' whose exception type can be projected into the Haskell exception hierarchy
+type MonadAllocateExceptable m = (MonadAllocate m, Exceptable (AllocationException m))
 
 {- | A helper for [DerivingVia](https://ghc.gitlab.haskell.org/ghc/doc/users_guide/exts/deriving_via.html) a
 'MonadAllocate' instance for any 'MonadResource'.
