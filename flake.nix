@@ -5,7 +5,7 @@
     pre-commit-hooks-nix.url = "github:shlevy/pre-commit-hooks.nix/hs-boot";
   };
 
-  outputs = {
+  outputs = inputs @ {
     self,
     flake-parts,
     haskell-nix,
@@ -13,7 +13,7 @@
     pre-commit-hooks-nix,
     ...
   }:
-    flake-parts.lib.mkFlake {inherit self;} ({
+    flake-parts.lib.mkFlake {inherit inputs;} ({
       config,
       lib,
       withSystem,
