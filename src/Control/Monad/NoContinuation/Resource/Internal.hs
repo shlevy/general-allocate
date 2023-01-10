@@ -25,6 +25,7 @@ import Control.Applicative
 import Control.Exception.Safe
 import Control.Monad
 import Control.Monad.Allocate
+import Control.Monad.Fix
 import Control.Monad.Primitive
 import Control.Monad.Reader
 import Control.Monad.State.Lazy

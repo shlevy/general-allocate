@@ -19,6 +19,7 @@ module Control.Monad.NoContinuation.Resource
   )
 where
 
+import Control.Monad
 import Control.Monad.NoContinuation.Resource.Internal
 import Control.Monad.Primitive
 import Control.Monad.Reader
