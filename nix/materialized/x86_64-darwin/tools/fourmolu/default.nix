@@ -13,7 +13,8 @@
         "dlist".revision = (((hackage."dlist")."1.0").revisions).default;
         "dlist".flags.werror = false;
         "text".revision = (((hackage."text")."1.2.5.0").revisions).default;
-        "ghc-lib-parser".revision = (((hackage."ghc-lib-parser")."9.4.3.20221104").revisions).default;
+        "data-array-byte".revision = (((hackage."data-array-byte")."0.1.0.1").revisions).default;
+        "ghc-lib-parser".revision = (((hackage."ghc-lib-parser")."9.4.4.20221225").revisions).default;
         "array".revision = (((hackage."array")."0.5.4.0").revisions).default;
         "parser-combinators".revision = (((hackage."parser-combinators")."1.3.0").revisions).default;
         "parser-combinators".flags.dev = false;
@@ -131,8 +132,7 @@
         "ansi-terminal".revision = (((hackage."ansi-terminal")."0.11.4").revisions).default;
         "ansi-terminal".flags.example = false;
         "ansi-terminal".flags.win32-2-13-1 = true;
-        "hashable".revision = (((hackage."hashable")."1.4.1.0").revisions).default;
-        "hashable".flags.containers = true;
+        "hashable".revision = (((hackage."hashable")."1.4.2.0").revisions).default;
         "hashable".flags.random-initial-seed = false;
         "hashable".flags.integer-gmp = true;
         "transformers-compat".revision = (((hackage."transformers-compat")."0.7.2").revisions).default;
@@ -254,6 +254,7 @@
           "contravariant".components.library.planned = lib.mkOverride 900 true;
           "syb".components.library.planned = lib.mkOverride 900 true;
           "text-short".components.library.planned = lib.mkOverride 900 true;
+          "data-array-byte".components.library.planned = lib.mkOverride 900 true;
           "assoc".components.library.planned = lib.mkOverride 900 true;
           "process".components.library.planned = lib.mkOverride 900 true;
           "template-haskell".components.library.planned = lib.mkOverride 900 true;
