@@ -1,5 +1,9 @@
 # Revision history for general-allocate
 
+## 0.2.1.1 -- 2023-01-17
+
+* Warn about https://gitlab.haskell.org/ghc/ghc/-/issues/16478 in `MonadWithExceptable` haddock
+
 ## 0.2.1.0 -- 2023-01-17
 
 * Make `MonadWithExceptable` a newclass for use with QuantifiedConstraints

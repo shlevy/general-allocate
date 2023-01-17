@@ -141,7 +141,11 @@ generalFinally go fin = stateThreadingGeneralWith alloc $ const go
   alloc = GeneralAllocate $ \_ → pure $ GeneralAllocated () rel
   rel _ = fin
 
--- | A 'MonadWith' whose exception type can be projected into the Haskell exception hierarchy
+{- | A 'MonadWith' whose exception type can be projected into the Haskell exception hierarchy
+
+Until https://gitlab.haskell.org/ghc/ghc/-/issues/16478 is fixed, you probably want to
+add @{\-# OPTIONS_GHC -Wno-simplifiable-class-constraints #-\}@ to modules using this.
+-}
 class (MonadWith m, Exceptable (WithException m)) ⇒ MonadWithExceptable m
 
 instance (MonadWith m, Exceptable (WithException m)) ⇒ MonadWithExceptable m
