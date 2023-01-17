@@ -1,5 +1,9 @@
 # Revision history for general-allocate
 
+## 0.2.1.0 -- 2023-01-17
+
+* Make `MonadWithExceptable` a newclass for use with QuantifiedConstraints
+
 ## 0.2.0.1 -- 2023-01-10
 
 * Fix build with mtl 2.3

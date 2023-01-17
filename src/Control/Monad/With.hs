@@ -1,7 +1,7 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
-{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
@@ -142,7 +142,9 @@ generalFinally go fin = stateThreadingGeneralWith alloc $ const go
   rel _ = fin
 
 -- | A 'MonadWith' whose exception type can be projected into the Haskell exception hierarchy
-type MonadWithExceptable m = (MonadWith m, Exceptable (WithException m))
+class (MonadWith m, Exceptable (WithException m)) ⇒ MonadWithExceptable m
+
+instance (MonadWith m, Exceptable (WithException m)) ⇒ MonadWithExceptable m
 
 instance MonadWith IO where
   stateThreadingGeneralWith (GeneralAllocate allocA) go = mask $ \restore → do
