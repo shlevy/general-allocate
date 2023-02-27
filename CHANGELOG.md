@@ -1,5 +1,9 @@
 # Revision history for general-allocate
 
+## 0.2.1.2 -- 2023-02-27
+
+* Update `primitive` dependency
+
 ## 0.2.1.1 -- 2023-01-17
 
 * Warn about https://gitlab.haskell.org/ghc/ghc/-/issues/16478 in `MonadWithExceptable` haddock

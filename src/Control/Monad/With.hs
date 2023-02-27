@@ -27,6 +27,7 @@ For contexts where nested scope-based allocation and release is insufficient, se
 module Control.Monad.With where
 
 import Control.Exception.Safe
+import Control.Monad
 import Control.Monad.Except
 import qualified Control.Monad.RWS.Lazy as L
 import Control.Monad.RWS.Strict
@@ -119,7 +120,7 @@ onFailure
 onFailure go err = generalWith alloc (const go)
  where
   alloc = GeneralAllocate $ \_ → pure $ GeneralAllocated () rel
-  rel (ReleaseFailure e) = err e >> pure ()
+  rel (ReleaseFailure e) = void $ err e
   rel _ = pure ()
 
 {- | Run some action after another one completes in an exception-safe manner.

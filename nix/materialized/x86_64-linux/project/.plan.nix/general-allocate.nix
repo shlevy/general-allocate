@@ -11,7 +11,7 @@
     flags = {};
     package = {
       specVersion = "3.0";
-      identifier = { name = "general-allocate"; version = "0.2.1.0"; };
+      identifier = { name = "general-allocate"; version = "0.2.1.2"; };
       license = "Apache-2.0";
       copyright = "Coypright 2022 Shea Levy.";
       maintainer = "shea@shealevy.com";

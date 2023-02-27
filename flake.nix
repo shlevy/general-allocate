@@ -25,7 +25,7 @@
         pkgsBySystem = system: withSystem system ({pkgs, ...}: pkgs);
         projectArgs = {
           src = ./.;
-          compiler-nix-name = "ghc925";
+          compiler-nix-name = "ghc926";
           shell.tools = {
             cabal = {version = "3.8.1.0";};
             fourmolu = {version = "0.10.1.0";};
