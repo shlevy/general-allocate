@@ -88,7 +88,7 @@ class (Monad m, Monad (AllocationContext m)) ⇒ MonadAllocate m where
   generalRegister
     ∷ (GeneralReleaseType (AllocationException m) () → AllocationContext m ())
     → m (GeneralReleaseKey m)
-  generalRegister rel = fst <$> (generalAllocate . GeneralAllocate $ alloc)
+  generalRegister rel = fst <$> generalAllocate (GeneralAllocate alloc)
    where
     alloc ∷ (∀ x. AllocationContext m x → AllocationContext m x) → AllocationContext m (GeneralAllocated (AllocationContext m) (AllocationException m) () () ())
     alloc _ = pure $ GeneralAllocated () rel

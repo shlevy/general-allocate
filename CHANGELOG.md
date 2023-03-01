@@ -1,5 +1,9 @@
 # Revision history for general-allocate
 
+## 0.2.1.3 -- 2023-03-01
+
+* Fix build with GHC 8.10
+
 ## 0.2.1.2 -- 2023-02-27
 
 * Update `primitive` dependency
