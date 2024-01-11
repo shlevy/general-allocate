@@ -5,6 +5,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -40,6 +41,7 @@ import Control.Monad.Trans.Maybe
 import Control.Monad.Trans.Resource.Internal
 import qualified Control.Monad.Writer.Lazy as L
 import Control.Monad.Writer.Strict
+import Data.Coerce
 import Data.Exceptable
 import Data.Functor
 import Data.Functor.Identity
@@ -57,7 +59,7 @@ lawfully in more monads (see 'WithNoContinuation'). In particular, the 'MonadWit
 'IO', 'ST', and 'Identity' allow for writing monad-generic exception-safe code which can be properly
 instantiated in 'IO' or mocked out in 'ST'/'Identity' without changing the code.
 -}
-class Monad m ⇒ MonadWith m where
+class (Monad m, ∀ x y. Coercible x y ⇒ Coercible (m x) (m y)) ⇒ MonadWith m where
   -- | Data characterizing exceptional exit from the scope.
   type WithException m
 
@@ -174,7 +176,7 @@ propagate until it terminates the entire monadic computation.
 -}
 newtype WithNoContinuation m a = WithNoContinuation (m a) deriving newtype (Functor, Applicative, Monad)
 
-instance (Monad m) ⇒ MonadWith (WithNoContinuation m) where
+instance (Monad m, ∀ x y. Coercible x y ⇒ Coercible (m x) (m y)) ⇒ MonadWith (WithNoContinuation m) where
   type WithException (WithNoContinuation m) = Void
   stateThreadingGeneralWith (GeneralAllocate allocA) go = WithNoContinuation $ do
     let WithNoContinuation allocA' = allocA id

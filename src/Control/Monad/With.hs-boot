@@ -1,12 +1,14 @@
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UnicodeSyntax #-}
 
 module Control.Monad.With where
 
 import Control.Exception.Safe
+import Data.Coerce
 import {-# SOURCE #-} Data.GeneralAllocate
 
-class Monad m ⇒ MonadWith m where
+class (Monad m, ∀ x y. Coercible x y ⇒ Coercible (m x) (m y)) ⇒ MonadWith m where
   type WithException m
   type WithException m = SomeException
   stateThreadingGeneralWith

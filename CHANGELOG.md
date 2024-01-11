@@ -1,5 +1,10 @@
 # Revision history for general-allocate
 
+## 0.2.2.0 -- 2024-01-11
+
+* Allow newer versions of some dependencies
+* Fixing deriving MonadWith instances
+
 ## 0.2.1.4 -- 2023-03-01
 
 * Allow older `primitive`
