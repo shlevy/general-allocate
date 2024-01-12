@@ -28,7 +28,8 @@ For contexts where nested scope-based allocation and release is insufficient, se
 module Control.Monad.With where
 
 import Control.Exception.Safe
-import Control.Monad
+import Control.Monad.Catch.Pure (CatchT (..))
+import qualified Control.Monad.Catch.Pure as Catch
 import Control.Monad.Except
 import qualified Control.Monad.RWS.Lazy as L
 import Control.Monad.RWS.Strict
@@ -295,6 +296,20 @@ instance MonadWith m ⇒ MonadWith (ExceptT e m) where
      where
       restore' ∷ ∀ x. ExceptT e m x → ExceptT e m x
       restore' = ExceptT . restore . runExceptT
+
+instance (Monad m, ∀ x y. Coercible x y ⇒ Coercible (m x) (m y)) ⇒ MonadWith (CatchT m) where
+  stateThreadingGeneralWith (GeneralAllocate allocA) go =
+    CatchT $
+      runCatchT (allocA id) >>= \case
+        Left e → pure $ Left e
+        Right (GeneralAllocated a releaseA) →
+          runCatchT (go a) >>= \case
+            Left e → runCatchT $ do
+              _ ← releaseA $ ReleaseFailure e
+              Catch.throwM e
+            Right b → runCatchT $ do
+              c ← releaseA $ ReleaseSuccess b
+              pure (b, c)
 
 instance MonadWith m ⇒ MonadWith (IdentityT m) where
   type WithException (IdentityT m) = WithException m

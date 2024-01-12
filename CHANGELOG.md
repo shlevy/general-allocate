@@ -1,5 +1,9 @@
 # Revision history for general-allocate
 
+## 0.2.3.0 -- 2024-01-12
+
+* `MonadWith` instance for `CatchT`
+
 ## 0.2.2.0 -- 2024-01-11
 
 * Allow newer versions of some dependencies
