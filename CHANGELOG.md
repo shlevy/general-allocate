@@ -1,5 +1,9 @@
 # Revision history for general-allocate
 
+## 0.2.3.1 -- 2024-01-12
+
+* Relax `base` bound for GHC 9.6
+
 ## 0.2.3.0 -- 2024-01-12
 
 * `MonadWith` instance for `CatchT`
